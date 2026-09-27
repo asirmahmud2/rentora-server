@@ -1,4 +1,4 @@
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const express = require('express');
 require('dotenv').config();
 const cors = require('cors');
@@ -14,43 +14,57 @@ app.get('/', (req, res) => {
 })
 
 const client = new MongoClient(uri, {
-    serverApi: {
-        version: ServerApiVersion.v1,
-        strict: true,
-        deprecationErrors: true,
-    }
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  }
 });
 
 async function run() {
-    try {
-        await client.connect();
+  try {
+    await client.connect();
 
-        const database = client.db("RENTORA");
-        const usersCollection = database.collection("users");
-        const propertiesCollection = database.collection("properties");
-        const bookingsCollection = database.collection("bookings");
-        const paymentsCollection = database.collection("payments");
+    const database = client.db("RENTORA");
+    const propertiesCollection = database.collection("properties");
+    const usersCollection = database.collection("users");
+    const bookingsCollection = database.collection("bookings");
+    const paymentsCollection = database.collection("payments");
 
-        app.get('/api/properties', async (req, res) => {
-          //getting all properties from the database
-          const properties = await propertiesCollection.find().toArray();
-          res.json(properties);
-        });
+    //create a new property
+    app.post('/api/properties', async (req, res) => {
+      const property = req.body;
+      const result = await propertiesCollection.insertOne(property);
+      res.json(result);
+    });
 
-        //create a new property
-        app.post('/api/properties', async (req, res) => {
-          const property = req.body;
-          const result = await propertiesCollection.insertOne(property);
-          res.json(result);
-        });
+    //get properties by id using query parameter
+    app.get('/api/properties', async (req, res) => {
+      const query = {};
 
+      if (req.query.ownerId) {
+        query.ownerId = req.query.ownerId;
+      }
 
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
-    } finally {
-        // Ensures that the client will close when you finish/error
-        // await client.close();
-    }
+      const properties = await propertiesCollection
+        .find(query)
+        .toArray();
+
+      res.json(properties);
+    });
+
+    //get all users
+    app.get('/api/users', async (req, res) => {
+      const users = await usersCollection.find().toArray();
+      res.json(users);
+    });
+
+    await client.db("admin").command({ ping: 1 });
+    console.log("Pinged your deployment. You successfully connected to MongoDB!");
+  } finally {
+    // Ensures that the client will close when you finish/error
+    // await client.close();
+  }
 }
 
 run().catch(console.dir);
