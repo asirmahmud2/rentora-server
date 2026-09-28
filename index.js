@@ -28,6 +28,7 @@ async function run() {
     const database = client.db("RENTORA");
     const propertiesCollection = database.collection("properties");
     const usersCollection = database.collection("users");
+    const favoritesCollection = database.collection("favorites");
     const bookingsCollection = database.collection("bookings");
     const paymentsCollection = database.collection("payments");
 
@@ -45,6 +46,9 @@ async function run() {
       if (req.query.ownerId) {
         query.ownerId = req.query.ownerId;
       }
+      if(req.query.id){
+        query._id = new ObjectId(req.query.id);
+      }
 
       const properties = await propertiesCollection
         .find(query)
@@ -57,6 +61,20 @@ async function run() {
     app.get('/api/users', async (req, res) => {
       const users = await usersCollection.find().toArray();
       res.json(users);
+    });
+
+    //add and remove functionality for tanent
+    app.post('/api/favorite', async (req, res) => {
+      const property = req.body;
+      const result = await favoritesCollection.insertOne(property);
+      res.json(result);
+    });
+
+    //remove favorite property
+    app.delete('/api/favorite/:id', async (req, res) => {
+      const id = req.params.id;
+      const result = await favoritesCollection.deleteOne({ _id: new ObjectId(id) });
+      res.json(result);
     });
 
     await client.db("admin").command({ ping: 1 });
