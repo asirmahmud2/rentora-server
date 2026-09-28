@@ -1,3 +1,7 @@
+const dns = require("dns");
+
+dns.setServers(["8.8.8.8", "8.8.4.4"]);
+
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const express = require('express');
 require('dotenv').config();
@@ -46,7 +50,7 @@ async function run() {
       if (req.query.ownerId) {
         query.ownerId = req.query.ownerId;
       }
-      if(req.query.id){
+      if (req.query.id) {
         query._id = new ObjectId(req.query.id);
       }
 
@@ -64,17 +68,46 @@ async function run() {
     });
 
     //add and remove functionality for tanent
-    app.post('/api/favorite', async (req, res) => {
-      const property = req.body;
-      const result = await favoritesCollection.insertOne(property);
-      res.json(result);
+    app.post("/api/favorite", async (req, res) => {
+        const { userId, propertyId, ...property } = req.body;
+
+        const favorite = {
+          ...property,
+          propertyId,
+          userId,
+          createdAt: new Date(),
+        };
+
+        const result = await favoritesCollection.insertOne(favorite);
+
+        res.status(201).json({
+          ...favorite,
+          _id: result.insertedId,
+        });
     });
 
     //remove favorite property
-    app.delete('/api/favorite/:id', async (req, res) => {
-      const id = req.params.id;
-      const result = await favoritesCollection.deleteOne({ _id: new ObjectId(id) });
-      res.json(result);
+    app.delete("/api/favorite/:propertyId", async (req, res) => {
+        const { propertyId } = req.params;
+        const { userId } = req.query;
+
+        const result = await favoritesCollection.deleteOne({
+          propertyId,
+          userId,
+        });
+        res.json({
+          message: "Favorite removed successfully",
+        });
+    });
+
+    app.get("/api/favorite/:propertyId", async (req, res) => {
+      const query = {};
+      if(req.query.userId) {
+        query.userId = req.query.userId;
+      }
+      query.propertyId = req.params.propertyId;
+      const favorites = await favoritesCollection.find(query).toArray();
+      res.json(favorites);
     });
 
     await client.db("admin").command({ ping: 1 });
