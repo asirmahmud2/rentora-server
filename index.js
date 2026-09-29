@@ -68,8 +68,13 @@ async function run() {
     //Update property by id
     app.patch('/api/properties/:id', async (req, res) => {
       const { id } = req.params;
-      const { ...property } = req.body;
-      const result = await propertiesCollection.updateOne({ _id: new ObjectId(id) }, { $set: property });
+      const property = req.body;
+
+      const result = await propertiesCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: property }
+      );
+
       res.json(result);
     });
 
