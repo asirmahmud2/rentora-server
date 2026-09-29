@@ -31,7 +31,7 @@ async function run() {
 
     const database = client.db("RENTORA");
     const propertiesCollection = database.collection("properties");
-    const usersCollection = database.collection("users");
+    const usersCollection = database.collection("user");
     const favoritesCollection = database.collection("favorites");
     const bookingsCollection = database.collection("bookings");
     const paymentsCollection = database.collection("payments");
@@ -46,20 +46,66 @@ async function run() {
     //get properties by id using query parameter
     app.get('/api/properties', async (req, res) => {
       const query = {};
-
       if (req.query.ownerId) {
-        query.ownerId = req.query.ownerId;
+        query["ownerInformation.ownerId"] = req.query.ownerId;
       }
       if (req.query.id) {
         query._id = new ObjectId(req.query.id);
       }
-
       const properties = await propertiesCollection
         .find(query)
         .toArray();
-
       res.json(properties);
     });
+
+    //Delete property by id
+    app.delete('/api/properties/:id', async (req, res) => {
+      const { id } = req.params;
+      const result = await propertiesCollection.deleteOne({ _id: new ObjectId(id) });
+      res.json(result);
+    });
+
+    //Update property by id
+    app.patch('/api/properties/:id', async (req, res) => {
+      const { id } = req.params;
+      const { ...property } = req.body;
+      const result = await propertiesCollection.updateOne({ _id: new ObjectId(id) }, { $set: property });
+      res.json(result);
+    });
+
+    //Reject property by id
+    app.patch('/api/properties/reject/:id', async (req, res) => {
+      const { id } = req.params;
+      const { rejectionFeedback } = req.body;
+      console.log(rejectionFeedback);
+      const result = await propertiesCollection.updateOne({ _id: new ObjectId(id) },
+        {
+          $set: {
+            status: 'Rejected',
+            rejectionFeedback
+          }
+        });
+      res.json(result);
+    });
+
+    //Approve property by id
+    app.patch('/api/properties/approve/:id', async (req, res) => {
+      const { id } = req.params;
+      const result = await propertiesCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set:
+          {
+            status: 'approved'
+
+          },
+          $unset: {
+            rejectionFeedback: '',
+          },
+        });
+      res.json(result);
+    });
+
 
     //get all users
     app.get('/api/users', async (req, res) => {
@@ -67,48 +113,70 @@ async function run() {
       res.json(users);
     });
 
-    //add and remove functionality for tanent
+    //Change user role
+    app.patch('/api/users/change-role', async (req, res) => {
+      const { userId } = req.body;
+      const { role } = req.body;
+      // Find the user by ID and update their role
+      const result = await usersCollection.updateOne(
+        { _id: new ObjectId(userId) },
+        { $set: { role: role } }
+      );
+      res.json(result);
+    });
+
+    //add and remove favorite functionality for tenant
     app.post("/api/favorite", async (req, res) => {
-        const { userId, propertyId, ...property } = req.body;
+      const { userId, propertyId, ...property } = req.body;
 
-        const favorite = {
-          ...property,
-          propertyId,
-          userId,
-          createdAt: new Date(),
-        };
+      const favorite = {
+        ...property,
+        propertyId,
+        userId,
+        createdAt: new Date(),
+      };
 
-        const result = await favoritesCollection.insertOne(favorite);
+      const result = await favoritesCollection.insertOne(favorite);
 
-        res.status(201).json({
-          ...favorite,
-          _id: result.insertedId,
-        });
+      res.status(201).json({
+        ...favorite,
+        _id: result.insertedId,
+      });
+    });
+
+    app.get("/api/favorite", async (req, res) => {
+      const query = {};
+      if (req.query.userId) {
+        query.userId = req.query.userId;
+      }
+      const favorites = await favoritesCollection.find(query).toArray();
+      res.json(favorites);
     });
 
     //remove favorite property
     app.delete("/api/favorite/:propertyId", async (req, res) => {
-        const { propertyId } = req.params;
-        const { userId } = req.query;
+      const { propertyId } = req.params;
+      const { userId } = req.query;
 
-        const result = await favoritesCollection.deleteOne({
-          propertyId,
-          userId,
-        });
-        res.json({
-          message: "Favorite removed successfully",
-        });
+      const result = await favoritesCollection.deleteOne({
+        propertyId,
+        userId,
+      });
+      res.json({
+        message: "Favorite removed successfully",
+      });
     });
 
     app.get("/api/favorite/:propertyId", async (req, res) => {
       const query = {};
-      if(req.query.userId) {
+      if (req.query.userId) {
         query.userId = req.query.userId;
       }
       query.propertyId = req.params.propertyId;
       const favorites = await favoritesCollection.find(query).toArray();
       res.json(favorites);
     });
+
 
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
