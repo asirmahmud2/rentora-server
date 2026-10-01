@@ -114,80 +114,20 @@ async function run() {
       const userId = req.user._id.toString();
       const userRole = req.user.role;
 
-      // Admin can get all properties
-      if (userRole === "Admin") {
-
-        if (req.query.status) {
-          query.status = req.query.status;
-        }
-
-        if (req.query.ownerId) {
-          query["ownerInformation.ownerId"] = req.query.ownerId;
-        }
-
-        if (req.query.id) {
-          if (!ObjectId.isValid(req.query.id)) {
-            return res.status(400).json({
-              message: "Invalid property id"
-            });
-          }
-
-          query._id = new ObjectId(req.query.id);
-        }
-
-        const properties = await propertiesCollection
-          .find(query)
-          .toArray();
-
-        return res.json(properties);
-      }
-
       // Owner
       if (userRole === "Owner") {
-
-        // Owner is requesting their own properties
+        // If ownerId is provided, validate it and add to query
         if (req.query.ownerId) {
-
           if (userId !== req.query.ownerId) {
             return res.status(403).json({
               message: "Forbidden access"
             });
           }
-
           query["ownerInformation.ownerId"] = req.query.ownerId;
-
-          // Owner can filter their own properties by status
-          if (req.query.status) {
-            query.status = req.query.status;
-          }
-
-        } else {
-          // Owner is requesting public properties
-          // Only approved properties are allowed
-          query.status = "Approved";
         }
-
-        if (req.query.id) {
-          if (!ObjectId.isValid(req.query.id)) {
-            return res.status(400).json({
-              message: "Invalid property id"
-            });
-          }
-
-          query._id = new ObjectId(req.query.id);
-        }
-
-        const properties = await propertiesCollection
-          .find(query)
-          .toArray();
-
-        return res.json(properties);
       }
 
-      // Tenant / other users
-      // Only approved properties are public
-      query.status = "Approved";
-
+      // If Id is provided, validate it and add to query
       if (req.query.id) {
         if (!ObjectId.isValid(req.query.id)) {
           return res.status(400).json({
@@ -198,9 +138,52 @@ async function run() {
         query._id = new ObjectId(req.query.id);
       }
 
-      const properties = await propertiesCollection
-        .find(query)
-        .toArray();
+      // If status is provided, add to query
+      if (req.query.status) {
+        query.status = req.query.status;
+      }
+
+      // If location is provided, search area, city and country
+      if (req.query.location) {
+        query.$or = [
+          {
+            "location.area": {
+              $regex: req.query.location,
+              $options: "i"
+            }
+          },
+          {
+            "location.city": {
+              $regex: req.query.location,
+              $options: "i"
+            }
+          },
+          {
+            "location.country": {
+              $regex: req.query.location,
+              $options: "i"
+            }
+          }
+        ];
+      }
+
+      // If property type is provided, add to query
+      if (req.query.propertyType) {
+        query.propertyType = req.query.propertyType;
+      }
+
+      let cursor = propertiesCollection.find(query);
+
+      // Sort by rent
+      if (req.query.sort === "price-asc") {
+        cursor = cursor.sort({ rent: 1 });
+      }
+
+      if (req.query.sort === "price-desc") {
+        cursor = cursor.sort({ rent: -1 });
+      }
+
+      const properties = await cursor.toArray();
 
       res.json(properties);
     });
