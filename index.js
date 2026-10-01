@@ -108,20 +108,100 @@ async function run() {
     });
 
     //get properties by id using query parameter
+    // Get properties
     app.get('/api/properties', verifyToken, async (req, res) => {
       const query = {};
-      if (req.query.ownerId) {
-        if (req.user._id.toString() !== req.query.ownerId) {
-          return res.status(403).json({ message: "Forbidden access" });
+      const userId = req.user._id.toString();
+      const userRole = req.user.role;
+
+      // Admin can get all properties
+      if (userRole === "Admin") {
+
+        if (req.query.status) {
+          query.status = req.query.status;
         }
-        query["ownerInformation.ownerId"] = req.query.ownerId;
+
+        if (req.query.ownerId) {
+          query["ownerInformation.ownerId"] = req.query.ownerId;
+        }
+
+        if (req.query.id) {
+          if (!ObjectId.isValid(req.query.id)) {
+            return res.status(400).json({
+              message: "Invalid property id"
+            });
+          }
+
+          query._id = new ObjectId(req.query.id);
+        }
+
+        const properties = await propertiesCollection
+          .find(query)
+          .toArray();
+
+        return res.json(properties);
       }
+
+      // Owner
+      if (userRole === "Owner") {
+
+        // Owner is requesting their own properties
+        if (req.query.ownerId) {
+
+          if (userId !== req.query.ownerId) {
+            return res.status(403).json({
+              message: "Forbidden access"
+            });
+          }
+
+          query["ownerInformation.ownerId"] = req.query.ownerId;
+
+          // Owner can filter their own properties by status
+          if (req.query.status) {
+            query.status = req.query.status;
+          }
+
+        } else {
+          // Owner is requesting public properties
+          // Only approved properties are allowed
+          query.status = "Approved";
+        }
+
+        if (req.query.id) {
+          if (!ObjectId.isValid(req.query.id)) {
+            return res.status(400).json({
+              message: "Invalid property id"
+            });
+          }
+
+          query._id = new ObjectId(req.query.id);
+        }
+
+        const properties = await propertiesCollection
+          .find(query)
+          .toArray();
+
+        return res.json(properties);
+      }
+
+      // Tenant / other users
+      // Only approved properties are public
+      query.status = "Approved";
+
       if (req.query.id) {
+        if (!ObjectId.isValid(req.query.id)) {
+          return res.status(400).json({
+            message: "Invalid property id"
+          });
+        }
+
         query._id = new ObjectId(req.query.id);
       }
+
       const properties = await propertiesCollection
         .find(query)
         .toArray();
+
       res.json(properties);
     });
 
@@ -142,13 +222,18 @@ async function run() {
       res.json(result);
     });
 
-    //Update property by id
+    // Update property by id
     app.patch(
       "/api/properties/:id", verifyToken, verifyUserRole("Owner", "Admin"), async (req, res) => {
         const { id } = req.params;
         const property = req.body;
         const userId = req.user._id.toString();
         const userRole = req.user.role;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            message: "Invalid property id",
+          });
+        }
 
         const existingProperty = await propertiesCollection.findOne({
           _id: new ObjectId(id),
@@ -160,6 +245,7 @@ async function run() {
           });
         }
 
+        // Owner can update only their own property
         if (
           userRole === "Owner" &&
           existingProperty.ownerInformation.ownerId !== userId
@@ -169,13 +255,21 @@ async function run() {
           });
         }
 
+        // Owner cannot change ownerInformation or status
+        if (userRole === "Owner") {
+          delete property.ownerInformation;
+          delete property.status;
+          delete property.rejectionFeedback;
+        }
+
         const result = await propertiesCollection.updateOne(
           { _id: new ObjectId(id) },
           { $set: property }
         );
 
         res.json(result);
-      });
+      }
+    );
 
     //Reject property by id
     app.patch('/api/properties/reject/:id', verifyToken, verifyUserRole('Admin'), async (req, res) => {
@@ -218,6 +312,12 @@ async function run() {
     app.patch('/api/users/change-role', verifyToken, verifyUserRole('Admin'), async (req, res) => {
       const { userId } = req.body;
       const { role } = req.body;
+      // Validate the role
+      if (!["Tenant", "Owner", "Admin"].includes(role)) {
+        return res.status(400).json({
+          message: "Invalid role"
+        });
+      }
       // Find the user by ID and update their role
       const result = await usersCollection.updateOne(
         { _id: new ObjectId(userId) },
