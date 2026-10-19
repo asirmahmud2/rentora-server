@@ -373,6 +373,38 @@ async function run() {
       res.json(favorites);
     });
 
+    //Bookings API
+    app.post("/api/bookings", verifyToken, verifyUserRole("Tenant"), async (req, res) => {
+      const { sessionId, propertyId, moveInDate, moveOutDate, contactNumber, notes, totalAmount } = req.body;
+
+      const property = await propertiesCollection.findOne({ _id: new ObjectId(propertyId) });
+      if (!property) {
+        return res.status(404).json({ message: "Property not found" });
+      }
+
+      const booking = await bookingsCollection.findOneAndUpdate(
+        { sessionId },
+        {
+          $setOnInsert: {
+            sessionId,
+            propertyId,
+            TenantUserId: req.user._id.toString(),
+            OwnerUserId: property.ownerInformation.ownerId,
+            bookingStatus: "Pending",
+            moveInDate,
+            moveOutDate,
+            contactNumber,
+            notes,
+            totalAmount,
+            createdAt: new Date(),
+          },
+        },
+        { upsert: true, returnDocument: "after" }
+      );
+
+      res.status(201).json(booking);
+    });
+
 
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
