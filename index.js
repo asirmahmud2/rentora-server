@@ -405,6 +405,49 @@ async function run() {
       res.status(201).json(booking);
     });
 
+    // Get all bookings for a user
+    app.get("/api/bookings", verifyToken, async (req, res) => {
+      const query = {};
+      const userRole = req.user.role;
+      const { status } = req.query;
+      const userId = req.user._id.toString();
+      if (userRole === "Tenant") {
+        query.TenantUserId = userId;
+      } else if (userRole === "Owner") {
+        query.OwnerUserId = userId;
+      }
+
+      if (status && status !== "All") {
+        query.bookingStatus = status;
+      }
+
+      const bookings = await bookingsCollection.find(query).toArray();
+      res.json(bookings);
+    });
+
+    // Update booking status
+    app.patch("/api/bookings", verifyToken, async (req, res) => {
+    const { bookingId, bookingStatus } = req.body;
+
+    if (!["Approved", "Rejected"].includes(bookingStatus)) {
+        return res.status(400).json({ message: "Invalid status" });
+    }
+
+    const result = await bookingsCollection.updateOne(
+        {
+            _id: new ObjectId(bookingId),
+            OwnerUserId: req.user._id.toString(),
+        },
+        { $set: { bookingStatus } }
+    );
+
+    if (result.matchedCount === 0) {
+        return res.status(404).json({ message: "Booking not found" });
+    }
+    console.log("Booking updated successfully");
+    res.json({ success: true });
+});
+
 
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
