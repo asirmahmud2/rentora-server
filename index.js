@@ -35,7 +35,13 @@ async function run() {
     const sessionCollection = database.collection("session");
     const favoritesCollection = database.collection("favorites");
     const bookingsCollection = database.collection("bookings");
-    const paymentsCollection = database.collection("payments");
+    const transactionsCollection = database.collection("transactions");
+
+    // Create a unique index on the transactionId field in the transactions collection so that duplicate transactions cannot be inserted
+    await transactionsCollection.createIndex(
+      { transactionId: 1 },
+      { unique: true }
+    );
 
     // Middleware to verify token
     const verifyToken = async (req, res, next) => {
@@ -375,7 +381,7 @@ async function run() {
 
     //Bookings API
     app.post("/api/bookings", verifyToken, verifyUserRole("Tenant"), async (req, res) => {
-      const { sessionId, propertyId, moveInDate, moveOutDate, contactNumber, notes, totalAmount } = req.body;
+      const { sessionId, transactionId, propertyId, moveInDate, moveOutDate, contactNumber, notes, totalAmount } = req.body;
 
       const property = await propertiesCollection.findOne({ _id: new ObjectId(propertyId) });
       if (!property) {
@@ -394,12 +400,35 @@ async function run() {
             moveInDate,
             moveOutDate,
             contactNumber,
+            status: "Paid",
             notes,
             totalAmount,
             createdAt: new Date(),
           },
         },
         { upsert: true, returnDocument: "after" }
+      );
+
+      // Save the payment record (once per payment)
+      await transactionsCollection.updateOne(
+        { transactionId },
+        {
+          $setOnInsert: {
+            transactionId,
+            bookingId: booking._id.toString(),
+            propertyId,
+            propertyName: property.title,
+            tenantId: req.user._id.toString(),
+            tenantName: req.user.name,
+            ownerId: property.ownerInformation.ownerId,
+            ownerName: property.ownerInformation.name,
+            amount: totalAmount,
+            currency: "BDT",
+            status: "Paid",
+            date: new Date(),
+          },
+        },
+        { upsert: true }
       );
 
       res.status(201).json(booking);
@@ -427,26 +456,36 @@ async function run() {
 
     // Update booking status
     app.patch("/api/bookings", verifyToken, async (req, res) => {
-    const { bookingId, bookingStatus } = req.body;
+      const { bookingId, bookingStatus } = req.body;
 
-    if (!["Approved", "Rejected"].includes(bookingStatus)) {
+      if (!["Approved", "Rejected"].includes(bookingStatus)) {
         return res.status(400).json({ message: "Invalid status" });
-    }
+      }
 
-    const result = await bookingsCollection.updateOne(
+      const result = await bookingsCollection.updateOne(
         {
-            _id: new ObjectId(bookingId),
-            OwnerUserId: req.user._id.toString(),
+          _id: new ObjectId(bookingId),
+          OwnerUserId: req.user._id.toString(),
         },
         { $set: { bookingStatus } }
-    );
+      );
 
-    if (result.matchedCount === 0) {
+      if (result.matchedCount === 0) {
         return res.status(404).json({ message: "Booking not found" });
-    }
-    console.log("Booking updated successfully");
-    res.json({ success: true });
-});
+      }
+      console.log("Booking updated successfully");
+      res.json({ success: true });
+    });
+
+    //transaction History
+    app.get("/api/transactions", verifyToken, async (req, res) => {
+      const query = {};
+      if(req.query.status && req.query.status !== "All") {
+        query.status = req.query.status;
+      }
+      const transactions = await transactionsCollection.find(query).toArray();
+      res.json(transactions);
+    })
 
 
     await client.db("admin").command({ ping: 1 });
