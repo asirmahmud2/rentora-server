@@ -36,6 +36,7 @@ async function run() {
     const favoritesCollection = database.collection("favorites");
     const bookingsCollection = database.collection("bookings");
     const transactionsCollection = database.collection("transactions");
+    const reviewsCollection = database.collection("reviews");
 
     // Create a unique index on the transactionId field in the transactions collection so that duplicate transactions cannot be inserted
     await transactionsCollection.createIndex(
@@ -113,7 +114,6 @@ async function run() {
       res.json(result);
     });
 
-    //get properties by id using query parameter
     // Get properties
     app.get('/api/properties', verifyToken, async (req, res) => {
       const query = {};
@@ -190,6 +190,13 @@ async function run() {
       }
 
       const properties = await cursor.toArray();
+
+      res.json(properties);
+    });
+
+    //Get property for featured properties upto 6 properties
+    app.get("/api/properties/featured", async (req, res) => {
+      const properties = await propertiesCollection.find({ status: "Approved" }).limit(6).toArray();
 
       res.json(properties);
     });
@@ -480,14 +487,70 @@ async function run() {
     //transaction History
     app.get("/api/transactions", verifyToken, async (req, res) => {
       const query = {};
-      if(req.query.status && req.query.status !== "All") {
+      if (req.query.status && req.query.status !== "All") {
         query.status = req.query.status;
       }
       const transactions = await transactionsCollection.find(query).toArray();
       res.json(transactions);
     })
 
+    //Review API
+    app.post("/api/reviews", verifyToken, verifyUserRole("Tenant"), async (req, res) => {
+      const { propertyId, rating, comment } = req.body;
 
+      const stars = Number(rating);
+      const text = String(comment || "").trim();
+
+      if (!ObjectId.isValid(propertyId)) {
+        return res.status(400).json({ message: "Invalid property" });
+      }
+      if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
+        return res.status(400).json({ message: "Rating must be 1 to 5" });
+      }
+      if (text.length < 10 || text.length > 500) {
+        return res.status(400).json({ message: "Comment must be 10 to 500 characters" });
+      }
+
+      const property = await propertiesCollection.findOne({ _id: new ObjectId(propertyId) });
+      if (!property) {
+        return res.status(404).json({ message: "Property not found" });
+      }
+
+      const tenantId = req.user._id.toString();
+
+      // One review per tenant per property
+      const existing = await reviewsCollection.findOne({ propertyId, tenantId });
+      if (existing) {
+        return res.status(409).json({ message: "You already reviewed this property" });
+      }
+
+      const review = {
+        propertyId,
+        propertyTitle: property.title,
+        tenantId,
+        tenantName: req.user.name,
+        tenantPhoto: req.user.image || "",
+        rating: stars,
+        comment: text,
+        createdAt: new Date(),
+      };
+
+      const result = await reviewsCollection.insertOne(review);
+      res.status(201).json(result);
+    });
+
+
+    // Get reviews for a property
+    app.get("/api/reviews", async (req, res) => {
+      const { propertyId } = req.query;
+
+      const reviews = await reviewsCollection
+        .find({ propertyId })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.json(reviews);
+    });
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
