@@ -541,12 +541,23 @@ async function run() {
 
 
     // Get reviews for a property
-    app.get("/api/reviews", async (req, res) => {
+    app.get("/api/reviews", verifyToken, async (req, res) => {
       const { propertyId } = req.query;
 
       const reviews = await reviewsCollection
         .find({ propertyId })
         .sort({ createdAt: -1 })
+        .toArray();
+
+      res.json(reviews);
+    });
+
+    //Top reviewed properties
+    app.get("/api/reviews/top", async (req, res) => {
+      const reviews = await reviewsCollection
+        .find({ rating: { $gte: 4 } })
+        .sort({ rating: -1, createdAt: -1 })
+        .limit(4)
         .toArray();
 
       res.json(reviews);
