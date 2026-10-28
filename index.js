@@ -194,6 +194,60 @@ async function run() {
       res.json(properties);
     });
 
+    //Get approved properties for tenants
+    app.get('/api/properties/public', async (req, res) => {
+      const query = {};
+      // If status is provided, add to query
+      if (req.query.status) {
+        query.status = req.query.status;
+      }
+
+      // If location is provided, search area, city and country
+      if (req.query.location) {
+        query.$or = [
+          {
+            "location.area": {
+              $regex: req.query.location,
+              $options: "i"
+            }
+          },
+          {
+            "location.city": {
+              $regex: req.query.location,
+              $options: "i"
+            }
+          },
+          {
+            "location.country": {
+              $regex: req.query.location,
+              $options: "i"
+            }
+          }
+        ];
+      }
+
+      // If property type is provided, add to query
+      if (req.query.propertyType) {
+        query.propertyType = req.query.propertyType;
+      }
+
+      let cursor = propertiesCollection.find(query);
+
+      // Sort by rent
+      if (req.query.sort === "price-asc") {
+        cursor = cursor.sort({ rent: 1 });
+      }
+
+      if (req.query.sort === "price-desc") {
+        cursor = cursor.sort({ rent: -1 });
+      }
+
+      const properties = await cursor.toArray();
+
+      res.json(properties);
+    });
+
+
     //Get property for featured properties upto 6 properties
     app.get("/api/properties/featured", async (req, res) => {
       const properties = await propertiesCollection.find({ status: "Approved" }).limit(6).toArray();
