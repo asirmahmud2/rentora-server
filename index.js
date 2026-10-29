@@ -25,608 +25,617 @@ const client = new MongoClient(uri, {
   }
 });
 
-async function run() {
+client
+  .connect()
+  .then(() => console.log("Connected to MongoDB"))
+  .catch(console.dir);
+
+// async function run() {
+//   try {
+// await client.connect();
+
+const database = client.db("RENTORA");
+const propertiesCollection = database.collection("properties");
+const usersCollection = database.collection("user");
+const sessionCollection = database.collection("session");
+const favoritesCollection = database.collection("favorites");
+const bookingsCollection = database.collection("bookings");
+const transactionsCollection = database.collection("transactions");
+const reviewsCollection = database.collection("reviews");
+
+// Create a unique index on the transactionId field in the transactions collection so that duplicate transactions cannot be inserted
+transactionsCollection
+  .createIndex({ transactionId: 1 }, { unique: true })
+  .catch(console.error);
+
+// Middleware to verify token
+const verifyToken = async (req, res, next) => {
   try {
-    await client.connect();
+    const authHeader = req.headers.authorization;
 
-    const database = client.db("RENTORA");
-    const propertiesCollection = database.collection("properties");
-    const usersCollection = database.collection("user");
-    const sessionCollection = database.collection("session");
-    const favoritesCollection = database.collection("favorites");
-    const bookingsCollection = database.collection("bookings");
-    const transactionsCollection = database.collection("transactions");
-    const reviewsCollection = database.collection("reviews");
+    if (!authHeader) {
+      return res.status(401).send({ message: 'Unauthorized access' });
+    }
 
-    // Create a unique index on the transactionId field in the transactions collection so that duplicate transactions cannot be inserted
-    await transactionsCollection.createIndex(
-      { transactionId: 1 },
-      { unique: true }
-    );
+    const token = authHeader.split(' ')[1];
 
-    // Middleware to verify token
-    const verifyToken = async (req, res, next) => {
-      try {
-        const authHeader = req.headers.authorization;
+    if (!token) {
+      return res.status(401).send({ message: 'Unauthorized access' });
+    }
 
-        if (!authHeader) {
-          return res.status(401).send({ message: 'Unauthorized access' });
-        }
+    const session = await sessionCollection.findOne({ token: token });
 
-        const token = authHeader.split(' ')[1];
+    if (!session) {
+      return res.status(401).send({ message: 'Unauthorized access' });
+    }
 
-        if (!token) {
-          return res.status(401).send({ message: 'Unauthorized access' });
-        }
+    const userId = session.userId;
 
-        const session = await sessionCollection.findOne({ token: token });
+    if (!ObjectId.isValid(userId)) {
+      return res.status(401).send({ message: 'Unauthorized access' });
+    }
 
-        if (!session) {
-          return res.status(401).send({ message: 'Unauthorized access' });
-        }
-
-        const userId = session.userId;
-
-        if (!ObjectId.isValid(userId)) {
-          return res.status(401).send({ message: 'Unauthorized access' });
-        }
-
-        const user = await usersCollection.findOne({
-          _id: new ObjectId(userId)
-        });
-
-        if (!user) {
-          return res.status(401).send({ message: 'Unauthorized access' });
-        }
-
-        req.user = user;
-        next();
-
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({ message: 'Internal server error' });
-      }
-    };
-
-    // Middleware to verify user role
-    const verifyUserRole = (...roles) => {
-      return (req, res, next) => {
-        if (!req.user) {
-          return res.status(401).send({ message: "Unauthorized access" });
-        }
-
-        if (!roles.includes(req.user.role)) {
-          return res.status(403).send({ message: "Forbidden access" });
-        }
-
-        next();
-      };
-    };
-
-    //create a new property
-    app.post('/api/properties', verifyToken, verifyUserRole('Owner'), async (req, res) => {
-      const userId = req.query.userId;
-      if (userId !== req.user._id.toString()) {
-        return res.status(403).json({ message: "Forbidden access" });
-      }
-      const property = req.body;
-      const result = await propertiesCollection.insertOne(property);
-      res.json(result);
+    const user = await usersCollection.findOne({
+      _id: new ObjectId(userId)
     });
 
-    // Get properties
-    app.get('/api/properties', verifyToken, async (req, res) => {
-      const query = {};
-      const userId = req.user._id.toString();
-      const userRole = req.user.role;
-
-      // Owner
-      if (userRole === "Owner") {
-        // If ownerId is provided, validate it and add to query
-        if (req.query.ownerId) {
-          if (userId !== req.query.ownerId) {
-            return res.status(403).json({
-              message: "Forbidden access"
-            });
-          }
-          query["ownerInformation.ownerId"] = req.query.ownerId;
-        }
-      }
-
-      // If Id is provided, validate it and add to query
-      if (req.query.id) {
-        if (!ObjectId.isValid(req.query.id)) {
-          return res.status(400).json({
-            message: "Invalid property id"
-          });
-        }
-
-        query._id = new ObjectId(req.query.id);
-      }
-
-      // If status is provided, add to query
-      if (req.query.status) {
-        query.status = req.query.status;
-      }
-
-      // If location is provided, search area, city and country
-      if (req.query.location) {
-        query.$or = [
-          {
-            "location.area": {
-              $regex: req.query.location,
-              $options: "i"
-            }
-          },
-          {
-            "location.city": {
-              $regex: req.query.location,
-              $options: "i"
-            }
-          },
-          {
-            "location.country": {
-              $regex: req.query.location,
-              $options: "i"
-            }
-          }
-        ];
-      }
-
-      // If property type is provided, add to query
-      if (req.query.propertyType) {
-        query.propertyType = req.query.propertyType;
-      }
-
-      let cursor = propertiesCollection.find(query);
-
-      // Sort by rent
-      if (req.query.sort === "price-asc") {
-        cursor = cursor.sort({ rent: 1 });
-      }
-
-      if (req.query.sort === "price-desc") {
-        cursor = cursor.sort({ rent: -1 });
-      }
-
-      const properties = await cursor.toArray();
-
-      res.json(properties);
-    });
-
-    //Get approved properties for tenants
-    app.get('/api/properties/public', async (req, res) => {
-      const query = {};
-      // If status is provided, add to query
-      if (req.query.status) {
-        query.status = req.query.status;
-      }
-
-      // If location is provided, search area, city and country
-      if (req.query.location) {
-        query.$or = [
-          {
-            "location.area": {
-              $regex: req.query.location,
-              $options: "i"
-            }
-          },
-          {
-            "location.city": {
-              $regex: req.query.location,
-              $options: "i"
-            }
-          },
-          {
-            "location.country": {
-              $regex: req.query.location,
-              $options: "i"
-            }
-          }
-        ];
-      }
-
-      // If property type is provided, add to query
-      if (req.query.propertyType) {
-        query.propertyType = req.query.propertyType;
-      }
-
-      let cursor = propertiesCollection.find(query);
-
-      // Sort by rent
-      if (req.query.sort === "price-asc") {
-        cursor = cursor.sort({ rent: 1 });
-      }
-
-      if (req.query.sort === "price-desc") {
-        cursor = cursor.sort({ rent: -1 });
-      }
-
-      const properties = await cursor.toArray();
-
-      res.json(properties);
-    });
-
-
-    //Get property for featured properties upto 6 properties
-    app.get("/api/properties/featured", async (req, res) => {
-      const properties = await propertiesCollection.find({ status: "Approved" }).limit(6).toArray();
-
-      res.json(properties);
-    });
-
-    //Delete property by id
-    app.delete('/api/properties/:id', verifyToken, verifyUserRole('Owner', 'Admin'), async (req, res) => {
-      const { id } = req.params;
-      const userId = req.user._id.toString();
-      const userRole = req.user.role;
-      const property = await propertiesCollection.findOne({ _id: new ObjectId(id) });
-      if (!property) {
-        return res.status(404).json({ message: "Property not found" });
-      }
-      if (userRole === "Owner" && property.ownerInformation.ownerId !== userId) {
-        return res.status(403).json({ message: "Forbidden access" });
-      }
-
-      const result = await propertiesCollection.deleteOne({ _id: new ObjectId(id) });
-      res.json(result);
-    });
-
-    // Update property by id
-    app.patch(
-      "/api/properties/:id", verifyToken, verifyUserRole("Owner", "Admin"), async (req, res) => {
-        const { id } = req.params;
-        const property = req.body;
-        const userId = req.user._id.toString();
-        const userRole = req.user.role;
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).json({
-            message: "Invalid property id",
-          });
-        }
-
-        const existingProperty = await propertiesCollection.findOne({
-          _id: new ObjectId(id),
-        });
-
-        if (!existingProperty) {
-          return res.status(404).json({
-            message: "Property not found",
-          });
-        }
-
-        // Owner can update only their own property
-        if (
-          userRole === "Owner" &&
-          existingProperty.ownerInformation.ownerId !== userId
-        ) {
-          return res.status(403).json({
-            message: "Forbidden access",
-          });
-        }
-
-        // Owner cannot change ownerInformation or status
-        if (userRole === "Owner") {
-          delete property.ownerInformation;
-          delete property.status;
-          delete property.rejectionFeedback;
-        }
-
-        const result = await propertiesCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: property }
-        );
-
-        res.json(result);
-      }
-    );
-
-    //Reject property by id
-    app.patch('/api/properties/reject/:id', verifyToken, verifyUserRole('Admin'), async (req, res) => {
-      const { id } = req.params;
-      const { rejectionFeedback } = req.body;
-      const result = await propertiesCollection.updateOne({ _id: new ObjectId(id) },
-        {
-          $set: {
-            status: 'Rejected',
-            rejectionFeedback
-          }
-        });
-      res.json(result);
-    });
-
-    //Approve property by id
-    app.patch('/api/properties/approve/:id', verifyToken, verifyUserRole('Admin'), async (req, res) => {
-      const { id } = req.params;
-      const result = await propertiesCollection.updateOne(
-        { _id: new ObjectId(id) },
-        {
-          $set:
-          {
-            status: 'Approved'
-          },
-          $unset: {
-            rejectionFeedback: '',
-          },
-        });
-      res.json(result);
-    });
-
-    //Get all users
-    app.get('/api/users', verifyToken, verifyUserRole('Admin'), async (req, res) => {
-      const users = await usersCollection.find().toArray();
-      res.json(users);
-    });
-
-    //Change user role
-    app.patch('/api/users/change-role', verifyToken, verifyUserRole('Admin'), async (req, res) => {
-      const { userId } = req.body;
-      const { role } = req.body;
-      // Validate the role
-      if (!["Tenant", "Owner", "Admin"].includes(role)) {
-        return res.status(400).json({
-          message: "Invalid role"
-        });
-      }
-      // Find the user by ID and update their role
-      const result = await usersCollection.updateOne(
-        { _id: new ObjectId(userId) },
-        { $set: { role: role } }
-      );
-      res.json(result);
-    });
-
-    //add and remove favorite functionality for tenant
-    app.post("/api/favorite", verifyToken, verifyUserRole('Tenant'), async (req, res) => {
-      const { userId, propertyId, ...property } = req.body;
-      if (userId !== req.user._id.toString()) {
-        return res.status(403).json({ message: "Forbidden access" });
-      }
-
-      const favorite = {
-        ...property,
-        propertyId,
-        userId,
-        createdAt: new Date(),
-      };
-
-      const result = await favoritesCollection.insertOne(favorite);
-
-      res.status(201).json({
-        ...favorite,
-        _id: result.insertedId,
-      });
-    });
-
-    app.get("/api/favorite", verifyToken, verifyUserRole('Tenant'), async (req, res) => {
-      const query = {};
-      if (req.query.userId !== req.user._id.toString()) {
-        return res.status(403).json({ message: "Forbidden access" });
-      }
-      if (req.query.userId) {
-        query.userId = req.query.userId;
-      }
-      const favorites = await favoritesCollection.find(query).toArray();
-      res.json(favorites);
-    });
-
-    //remove favorite property
-    app.delete("/api/favorite/:propertyId", verifyToken, verifyUserRole('Tenant'), async (req, res) => {
-      const { propertyId } = req.params;
-      const { userId } = req.query;
-      if (userId !== req.user._id.toString()) {
-        return res.status(403).json({ message: "Forbidden access" });
-      }
-
-      const result = await favoritesCollection.deleteOne({
-        propertyId,
-        userId,
-      });
-      res.json({
-        message: "Favorite removed successfully",
-      });
-    });
-
-    app.get("/api/favorite/:propertyId", verifyToken, verifyUserRole('Tenant'), async (req, res) => {
-      const query = {};
-      if (req.query.userId !== req.user._id.toString()) {
-        return res.status(403).json({ message: "Forbidden access" });
-      }
-      if (req.query.userId) {
-        query.userId = req.query.userId;
-      }
-      query.propertyId = req.params.propertyId;
-      const favorites = await favoritesCollection.find(query).toArray();
-      res.json(favorites);
-    });
-
-    //Bookings API
-    app.post("/api/bookings", verifyToken, verifyUserRole("Tenant"), async (req, res) => {
-      const { sessionId, transactionId, propertyId, moveInDate, moveOutDate, contactNumber, notes, totalAmount } = req.body;
-
-      const property = await propertiesCollection.findOne({ _id: new ObjectId(propertyId) });
-      if (!property) {
-        return res.status(404).json({ message: "Property not found" });
-      }
-
-      const booking = await bookingsCollection.findOneAndUpdate(
-        { sessionId },
-        {
-          $setOnInsert: {
-            sessionId,
-            propertyId,
-            TenantUserId: req.user._id.toString(),
-            OwnerUserId: property.ownerInformation.ownerId,
-            bookingStatus: "Pending",
-            moveInDate,
-            moveOutDate,
-            contactNumber,
-            status: "Paid",
-            notes,
-            totalAmount,
-            createdAt: new Date(),
-          },
-        },
-        { upsert: true, returnDocument: "after" }
-      );
-
-      // Save the payment record (once per payment)
-      await transactionsCollection.updateOne(
-        { transactionId },
-        {
-          $setOnInsert: {
-            transactionId,
-            bookingId: booking._id.toString(),
-            propertyId,
-            propertyName: property.title,
-            tenantId: req.user._id.toString(),
-            tenantName: req.user.name,
-            ownerId: property.ownerInformation.ownerId,
-            ownerName: property.ownerInformation.name,
-            amount: totalAmount,
-            currency: "BDT",
-            status: "Paid",
-            date: new Date(),
-          },
-        },
-        { upsert: true }
-      );
-
-      res.status(201).json(booking);
-    });
-
-    // Get all bookings for a user
-    app.get("/api/bookings", verifyToken, async (req, res) => {
-      const query = {};
-      const userRole = req.user.role;
-      const { status } = req.query;
-      const userId = req.user._id.toString();
-      if (userRole === "Tenant") {
-        query.TenantUserId = userId;
-      } else if (userRole === "Owner") {
-        query.OwnerUserId = userId;
-      }
-
-      if (status && status !== "All") {
-        query.bookingStatus = status;
-      }
-
-      const bookings = await bookingsCollection.find(query).toArray();
-      res.json(bookings);
-    });
-
-    // Update booking status
-    app.patch("/api/bookings", verifyToken, async (req, res) => {
-      const { bookingId, bookingStatus } = req.body;
-
-      if (!["Approved", "Rejected"].includes(bookingStatus)) {
-        return res.status(400).json({ message: "Invalid status" });
-      }
-
-      const result = await bookingsCollection.updateOne(
-        {
-          _id: new ObjectId(bookingId),
-          OwnerUserId: req.user._id.toString(),
-        },
-        { $set: { bookingStatus } }
-      );
-
-      if (result.matchedCount === 0) {
-        return res.status(404).json({ message: "Booking not found" });
-      }
-      console.log("Booking updated successfully");
-      res.json({ success: true });
-    });
-
-    //transaction History
-    app.get("/api/transactions", verifyToken, async (req, res) => {
-      const query = {};
-      if (req.query.status && req.query.status !== "All") {
-        query.status = req.query.status;
-      }
-      const transactions = await transactionsCollection.find(query).toArray();
-      res.json(transactions);
-    })
-
-    //Review API
-    app.post("/api/reviews", verifyToken, verifyUserRole("Tenant"), async (req, res) => {
-      const { propertyId, rating, comment } = req.body;
-
-      const stars = Number(rating);
-      const text = String(comment || "").trim();
-
-      if (!ObjectId.isValid(propertyId)) {
-        return res.status(400).json({ message: "Invalid property" });
-      }
-      if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
-        return res.status(400).json({ message: "Rating must be 1 to 5" });
-      }
-      if (text.length < 10 || text.length > 500) {
-        return res.status(400).json({ message: "Comment must be 10 to 500 characters" });
-      }
-
-      const property = await propertiesCollection.findOne({ _id: new ObjectId(propertyId) });
-      if (!property) {
-        return res.status(404).json({ message: "Property not found" });
-      }
-
-      const tenantId = req.user._id.toString();
-
-      // One review per tenant per property
-      const existing = await reviewsCollection.findOne({ propertyId, tenantId });
-      if (existing) {
-        return res.status(409).json({ message: "You already reviewed this property" });
-      }
-
-      const review = {
-        propertyId,
-        propertyTitle: property.title,
-        tenantId,
-        tenantName: req.user.name,
-        tenantPhoto: req.user.image || "",
-        rating: stars,
-        comment: text,
-        createdAt: new Date(),
-      };
-
-      const result = await reviewsCollection.insertOne(review);
-      res.status(201).json(result);
-    });
-
-
-    // Get reviews for a property
-    app.get("/api/reviews", verifyToken, async (req, res) => {
-      const { propertyId } = req.query;
-
-      const reviews = await reviewsCollection
-        .find({ propertyId })
-        .sort({ createdAt: -1 })
-        .toArray();
-
-      res.json(reviews);
-    });
-
-    //Top reviewed properties
-    app.get("/api/reviews/top", async (req, res) => {
-      const reviews = await reviewsCollection
-        .find({ rating: { $gte: 4 } })
-        .sort({ rating: -1, createdAt: -1 })
-        .limit(4)
-        .toArray();
-
-      res.json(reviews);
-    });
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  } finally {
-    // Ensures that the client will close when you finish/error
-    // await client.close();
+    if (!user) {
+      return res.status(401).send({ message: 'Unauthorized access' });
+    }
+
+    req.user = user;
+    next();
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: 'Internal server error' });
   }
+};
+
+// Middleware to verify user role
+const verifyUserRole = (...roles) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).send({ message: "Unauthorized access" });
+    }
+
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).send({ message: "Forbidden access" });
+    }
+
+    next();
+  };
+};
+
+//create a new property
+app.post('/api/properties', verifyToken, verifyUserRole('Owner'), async (req, res) => {
+  const userId = req.query.userId;
+  if (userId !== req.user._id.toString()) {
+    return res.status(403).json({ message: "Forbidden access" });
+  }
+  const property = req.body;
+  const result = await propertiesCollection.insertOne(property);
+  res.json(result);
+});
+
+// Get properties
+app.get('/api/properties', verifyToken, async (req, res) => {
+  const query = {};
+  const userId = req.user._id.toString();
+  const userRole = req.user.role;
+
+  // Owner
+  if (userRole === "Owner") {
+    // If ownerId is provided, validate it and add to query
+    if (req.query.ownerId) {
+      if (userId !== req.query.ownerId) {
+        return res.status(403).json({
+          message: "Forbidden access"
+        });
+      }
+      query["ownerInformation.ownerId"] = req.query.ownerId;
+    }
+  }
+
+  // If Id is provided, validate it and add to query
+  if (req.query.id) {
+    if (!ObjectId.isValid(req.query.id)) {
+      return res.status(400).json({
+        message: "Invalid property id"
+      });
+    }
+
+    query._id = new ObjectId(req.query.id);
+  }
+
+  // If status is provided, add to query
+  if (req.query.status) {
+    query.status = req.query.status;
+  }
+
+  // If location is provided, search area, city and country
+  if (req.query.location) {
+    query.$or = [
+      {
+        "location.area": {
+          $regex: req.query.location,
+          $options: "i"
+        }
+      },
+      {
+        "location.city": {
+          $regex: req.query.location,
+          $options: "i"
+        }
+      },
+      {
+        "location.country": {
+          $regex: req.query.location,
+          $options: "i"
+        }
+      }
+    ];
+  }
+
+  // If property type is provided, add to query
+  if (req.query.propertyType) {
+    query.propertyType = req.query.propertyType;
+  }
+
+  let cursor = propertiesCollection.find(query);
+
+  // Sort by rent
+  if (req.query.sort === "price-asc") {
+    cursor = cursor.sort({ rent: 1 });
+  }
+
+  if (req.query.sort === "price-desc") {
+    cursor = cursor.sort({ rent: -1 });
+  }
+
+  const properties = await cursor.toArray();
+
+  res.json(properties);
+});
+
+//Get approved properties for tenants
+app.get('/api/properties/public', async (req, res) => {
+  const query = {};
+  // If status is provided, add to query
+  if (req.query.status) {
+    query.status = req.query.status;
+  }
+
+  // If location is provided, search area, city and country
+  if (req.query.location) {
+    query.$or = [
+      {
+        "location.area": {
+          $regex: req.query.location,
+          $options: "i"
+        }
+      },
+      {
+        "location.city": {
+          $regex: req.query.location,
+          $options: "i"
+        }
+      },
+      {
+        "location.country": {
+          $regex: req.query.location,
+          $options: "i"
+        }
+      }
+    ];
+  }
+
+  // If property type is provided, add to query
+  if (req.query.propertyType) {
+    query.propertyType = req.query.propertyType;
+  }
+
+  let cursor = propertiesCollection.find(query);
+
+  // Sort by rent
+  if (req.query.sort === "price-asc") {
+    cursor = cursor.sort({ rent: 1 });
+  }
+
+  if (req.query.sort === "price-desc") {
+    cursor = cursor.sort({ rent: -1 });
+  }
+
+  const properties = await cursor.toArray();
+
+  res.json(properties);
+});
+
+
+//Get property for featured properties upto 6 properties
+app.get("/api/properties/featured", async (req, res) => {
+  const properties = await propertiesCollection.find({ status: "Approved" }).limit(6).toArray();
+
+  res.json(properties);
+});
+
+//Delete property by id
+app.delete('/api/properties/:id', verifyToken, verifyUserRole('Owner', 'Admin'), async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user._id.toString();
+  const userRole = req.user.role;
+  const property = await propertiesCollection.findOne({ _id: new ObjectId(id) });
+  if (!property) {
+    return res.status(404).json({ message: "Property not found" });
+  }
+  if (userRole === "Owner" && property.ownerInformation.ownerId !== userId) {
+    return res.status(403).json({ message: "Forbidden access" });
+  }
+
+  const result = await propertiesCollection.deleteOne({ _id: new ObjectId(id) });
+  res.json(result);
+});
+
+// Update property by id
+app.patch(
+  "/api/properties/:id", verifyToken, verifyUserRole("Owner", "Admin"), async (req, res) => {
+    const { id } = req.params;
+    const property = req.body;
+    const userId = req.user._id.toString();
+    const userRole = req.user.role;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        message: "Invalid property id",
+      });
+    }
+
+    const existingProperty = await propertiesCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!existingProperty) {
+      return res.status(404).json({
+        message: "Property not found",
+      });
+    }
+
+    // Owner can update only their own property
+    if (
+      userRole === "Owner" &&
+      existingProperty.ownerInformation.ownerId !== userId
+    ) {
+      return res.status(403).json({
+        message: "Forbidden access",
+      });
+    }
+
+    // Owner cannot change ownerInformation or status
+    if (userRole === "Owner") {
+      delete property.ownerInformation;
+      delete property.status;
+      delete property.rejectionFeedback;
+    }
+
+    const result = await propertiesCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: property }
+    );
+
+    res.json(result);
+  }
+);
+
+//Reject property by id
+app.patch('/api/properties/reject/:id', verifyToken, verifyUserRole('Admin'), async (req, res) => {
+  const { id } = req.params;
+  const { rejectionFeedback } = req.body;
+  const result = await propertiesCollection.updateOne({ _id: new ObjectId(id) },
+    {
+      $set: {
+        status: 'Rejected',
+        rejectionFeedback
+      }
+    });
+  res.json(result);
+});
+
+//Approve property by id
+app.patch('/api/properties/approve/:id', verifyToken, verifyUserRole('Admin'), async (req, res) => {
+  const { id } = req.params;
+  const result = await propertiesCollection.updateOne(
+    { _id: new ObjectId(id) },
+    {
+      $set:
+      {
+        status: 'Approved'
+      },
+      $unset: {
+        rejectionFeedback: '',
+      },
+    });
+  res.json(result);
+});
+
+//Get all users
+app.get('/api/users', verifyToken, verifyUserRole('Admin'), async (req, res) => {
+  const users = await usersCollection.find().toArray();
+  res.json(users);
+});
+
+//Change user role
+app.patch('/api/users/change-role', verifyToken, verifyUserRole('Admin'), async (req, res) => {
+  const { userId } = req.body;
+  const { role } = req.body;
+  // Validate the role
+  if (!["Tenant", "Owner", "Admin"].includes(role)) {
+    return res.status(400).json({
+      message: "Invalid role"
+    });
+  }
+  // Find the user by ID and update their role
+  const result = await usersCollection.updateOne(
+    { _id: new ObjectId(userId) },
+    { $set: { role: role } }
+  );
+  res.json(result);
+});
+
+//add and remove favorite functionality for tenant
+app.post("/api/favorite", verifyToken, verifyUserRole('Tenant'), async (req, res) => {
+  const { userId, propertyId, ...property } = req.body;
+  if (userId !== req.user._id.toString()) {
+    return res.status(403).json({ message: "Forbidden access" });
+  }
+
+  const favorite = {
+    ...property,
+    propertyId,
+    userId,
+    createdAt: new Date(),
+  };
+
+  const result = await favoritesCollection.insertOne(favorite);
+
+  res.status(201).json({
+    ...favorite,
+    _id: result.insertedId,
+  });
+});
+
+app.get("/api/favorite", verifyToken, verifyUserRole('Tenant'), async (req, res) => {
+  const query = {};
+  if (req.query.userId !== req.user._id.toString()) {
+    return res.status(403).json({ message: "Forbidden access" });
+  }
+  if (req.query.userId) {
+    query.userId = req.query.userId;
+  }
+  const favorites = await favoritesCollection.find(query).toArray();
+  res.json(favorites);
+});
+
+//remove favorite property
+app.delete("/api/favorite/:propertyId", verifyToken, verifyUserRole('Tenant'), async (req, res) => {
+  const { propertyId } = req.params;
+  const { userId } = req.query;
+  if (userId !== req.user._id.toString()) {
+    return res.status(403).json({ message: "Forbidden access" });
+  }
+
+  const result = await favoritesCollection.deleteOne({
+    propertyId,
+    userId,
+  });
+  res.json({
+    message: "Favorite removed successfully",
+  });
+});
+
+app.get("/api/favorite/:propertyId", verifyToken, verifyUserRole('Tenant'), async (req, res) => {
+  const query = {};
+  if (req.query.userId !== req.user._id.toString()) {
+    return res.status(403).json({ message: "Forbidden access" });
+  }
+  if (req.query.userId) {
+    query.userId = req.query.userId;
+  }
+  query.propertyId = req.params.propertyId;
+  const favorites = await favoritesCollection.find(query).toArray();
+  res.json(favorites);
+});
+
+//Bookings API
+app.post("/api/bookings", verifyToken, verifyUserRole("Tenant"), async (req, res) => {
+  const { sessionId, transactionId, propertyId, moveInDate, moveOutDate, contactNumber, notes, totalAmount } = req.body;
+
+  const property = await propertiesCollection.findOne({ _id: new ObjectId(propertyId) });
+  if (!property) {
+    return res.status(404).json({ message: "Property not found" });
+  }
+
+  const booking = await bookingsCollection.findOneAndUpdate(
+    { sessionId },
+    {
+      $setOnInsert: {
+        sessionId,
+        propertyId,
+        TenantUserId: req.user._id.toString(),
+        OwnerUserId: property.ownerInformation.ownerId,
+        bookingStatus: "Pending",
+        moveInDate,
+        moveOutDate,
+        contactNumber,
+        status: "Paid",
+        notes,
+        totalAmount,
+        createdAt: new Date(),
+      },
+    },
+    { upsert: true, returnDocument: "after" }
+  );
+
+  // Save the payment record (once per payment)
+  await transactionsCollection.updateOne(
+    { transactionId },
+    {
+      $setOnInsert: {
+        transactionId,
+        bookingId: booking._id.toString(),
+        propertyId,
+        propertyName: property.title,
+        tenantId: req.user._id.toString(),
+        tenantName: req.user.name,
+        ownerId: property.ownerInformation.ownerId,
+        ownerName: property.ownerInformation.name,
+        amount: totalAmount,
+        currency: "BDT",
+        status: "Paid",
+        date: new Date(),
+      },
+    },
+    { upsert: true }
+  );
+
+  res.status(201).json(booking);
+});
+
+// Get all bookings for a user
+app.get("/api/bookings", verifyToken, async (req, res) => {
+  const query = {};
+  const userRole = req.user.role;
+  const { status } = req.query;
+  const userId = req.user._id.toString();
+  if (userRole === "Tenant") {
+    query.TenantUserId = userId;
+  } else if (userRole === "Owner") {
+    query.OwnerUserId = userId;
+  }
+
+  if (status && status !== "All") {
+    query.bookingStatus = status;
+  }
+
+  const bookings = await bookingsCollection.find(query).toArray();
+  res.json(bookings);
+});
+
+// Update booking status
+app.patch("/api/bookings", verifyToken, async (req, res) => {
+  const { bookingId, bookingStatus } = req.body;
+
+  if (!["Approved", "Rejected"].includes(bookingStatus)) {
+    return res.status(400).json({ message: "Invalid status" });
+  }
+
+  const result = await bookingsCollection.updateOne(
+    {
+      _id: new ObjectId(bookingId),
+      OwnerUserId: req.user._id.toString(),
+    },
+    { $set: { bookingStatus } }
+  );
+
+  if (result.matchedCount === 0) {
+    return res.status(404).json({ message: "Booking not found" });
+  }
+  console.log("Booking updated successfully");
+  res.json({ success: true });
+});
+
+//transaction History
+app.get("/api/transactions", verifyToken, verifyUserRole("Admin"), async (req, res) => {
+  const query = {};
+  if (req.query.status && req.query.status !== "All") {
+    query.status = req.query.status;
+  }
+  const transactions = await transactionsCollection.find(query).toArray();
+  res.json(transactions);
+})
+
+//Review API
+app.post("/api/reviews", verifyToken, verifyUserRole("Tenant"), async (req, res) => {
+  const { propertyId, rating, comment } = req.body;
+
+  const stars = Number(rating);
+  const text = String(comment || "").trim();
+
+  if (!ObjectId.isValid(propertyId)) {
+    return res.status(400).json({ message: "Invalid property" });
+  }
+  if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
+    return res.status(400).json({ message: "Rating must be 1 to 5" });
+  }
+  if (text.length < 10 || text.length > 500) {
+    return res.status(400).json({ message: "Comment must be 10 to 500 characters" });
+  }
+
+  const property = await propertiesCollection.findOne({ _id: new ObjectId(propertyId) });
+  if (!property) {
+    return res.status(404).json({ message: "Property not found" });
+  }
+
+  const tenantId = req.user._id.toString();
+
+  // One review per tenant per property
+  const existing = await reviewsCollection.findOne({ propertyId, tenantId });
+  if (existing) {
+    return res.status(409).json({ message: "You already reviewed this property" });
+  }
+
+  const review = {
+    propertyId,
+    propertyTitle: property.title,
+    tenantId,
+    tenantName: req.user.name,
+    tenantPhoto: req.user.image || "",
+    rating: stars,
+    comment: text,
+    createdAt: new Date(),
+  };
+
+  const result = await reviewsCollection.insertOne(review);
+  res.status(201).json(result);
+});
+
+
+// Get reviews for a property
+app.get("/api/reviews", verifyToken, async (req, res) => {
+  const { propertyId } = req.query;
+
+  const reviews = await reviewsCollection
+    .find({ propertyId })
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  res.json(reviews);
+});
+
+//Top reviewed properties
+app.get("/api/reviews/top", async (req, res) => {
+  const reviews = await reviewsCollection
+    .find({ rating: { $gte: 4 } })
+    .sort({ rating: -1, createdAt: -1 })
+    .limit(4)
+    .toArray();
+
+  res.json(reviews);
+});
+
+
+//     // await client.db("admin").command({ ping: 1 });
+//     console.log("Pinged your deployment. You successfully connected to MongoDB!");
+//   } finally {
+//     // Ensures that the client will close when you finish/error
+//     // await client.close();
+//   }
+// }
+
+// run().catch(console.dir);
+
+if (!process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`Server is running on port ${port}`);
+  });
 }
 
-run().catch(console.dir);
-
-
-app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
-})
+module.exports = app;
