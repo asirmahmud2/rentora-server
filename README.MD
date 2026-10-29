@@ -1,138 +1,187 @@
-# RENTORA — Backend API
+# RENTORA - Property Rental & Booking Platform (Backend)
 
-This repository contains the Express and MongoDB API for **RENTORA**, a property rental and booking platform. It manages property listings, administrative moderation, user roles, favorites, and the booking/transaction creation step used by the Stripe Checkout flow.
+REST API for RENTORA, a rental marketplace where owners list properties, admins approve them, and tenants search, save favorites, book, pay and review.
 
-## Live services
+This repository is the **Express and MongoDB backend**. It serves the [RENTORA frontend](https://github.com/asirmahmud2/rentora-frontend).
 
-- **Frontend:** [rentora-frontend-seven.vercel.app](https://rentora-frontend-seven.vercel.app)
-- **Backend API:** [rentora-server-nine.vercel.app](https://rentora-server-nine.vercel.app)
+| | |
+|---|---|
+| **API base URL** | https://rentora-server-nine.vercel.app |
+| **Live site** | https://rentora-frontend-seven.vercel.app |
+| **Backend repository** | https://github.com/asirmahmud2/rentora-server |
+| **Frontend repository** | https://github.com/asirmahmud2/rentora-frontend |
 
-## Technology stack
+To check that the API is running, open `/api/properties/featured` on the base URL. It returns up to six approved properties as JSON.
 
-- **Node.js** — JavaScript runtime (CommonJS modules)
-- **Express 5** — HTTP routes and middleware
-- **MongoDB Node.js driver** — database access
-- **dotenv** — environment-variable loading
-- **cors** — cross-origin request handling
-- **Vercel** — deployment configuration
+## Key Features
 
-The API uses the same MongoDB deployment as the frontend's authentication setup, with marketplace data in the `RENTORA` database. Authentication is integrated with Better Auth: the API looks up the bearer session token in MongoDB and resolves the associated user and role.
+- Role-based access control for **Tenant**, **Owner** and **Admin**
+- Property listing with backend search by location, filter by property type and sort by rent
+- Admin approval and rejection of properties, with rejection feedback
+- Owners can edit and delete only their own properties
+- Favorites for tenants
+- Bookings created after a successful payment, with the statuses Pending, Approved and Rejected
+- Payment transactions saved once per payment, protected by a unique index
+- Tenant reviews with a rating from 1 to 5 and a comment, plus a public endpoint for top reviews
+- Admin tools to list users and change roles
 
-## Capabilities
+## Tech Stack
 
-- Create, read, update, delete, and moderate rental property listings.
-- Filter property queries by ID, status, location, and property type; sort by rent.
-- Return a featured collection of approved properties.
-- Restrict property management to authorized Owners and Admins, including owner-ownership checks for supported operations.
-- Allow Admins to retrieve users and change user roles.
-- Allow Tenants to create, list, check, and remove favorites.
-- Create or reuse a booking after successful Stripe Checkout verification, and create or reuse its transaction record.
+| Area | Technology |
+|---|---|
+| Runtime | Node.js 20.19 or newer (CommonJS) |
+| Framework | Express 5 |
+| Database | MongoDB (database name `RENTORA`) with the official driver |
+| Hosting | Vercel (`vercel.json` included) |
 
-## Getting started
+### npm packages
 
-### Requirements
+| Package | Version | Used for |
+|---|---|---|
+| `express` | `^5.2.1` | HTTP server and routing |
+| `mongodb` | `^7.6.0` | Database access and indexes |
+| `cors` | `^2.8.6` | Cross-origin requests from the frontend |
+| `dotenv` | `^18.0.4` | Loading environment variables |
 
-- Node.js compatible with the installed dependencies (Node.js **20.19+** is recommended)
-- npm
-- A MongoDB connection string
+## Authentication and Authorization
 
-### 1. Install dependencies
+The frontend uses Better Auth, which stores login sessions in the MongoDB `session` collection. This API does not issue tokens itself. For every protected route it:
 
-```bash
-npm install
-```
+1. Reads `Authorization: Bearer <session token>` from the request
+2. Finds that token in the `session` collection
+3. Loads the matching document from the `user` collection and attaches it to the request
+4. Checks the user's role with `verifyUserRole`, then applies ownership rules, for example an owner can change only their own property
 
-### 2. Configure environment variables
+A missing or unknown token returns `401`, and a role that is not allowed returns `403`.
 
-Create a `.env` file in the backend repository root:
+## API Reference
 
-```dotenv
-MONGO_URI="mongodb+srv://<username>:<password>@<cluster>/<options>"
+Routes marked "Logged in", "Tenant", "Owner" or "Admin" need the `Authorization` header described above.
+
+### Properties
+
+| Method | Path | Access | Description |
+|---|---|---|---|
+| `GET` | `/api/properties/featured` | Public | Up to 6 approved properties |
+| `GET` | `/api/properties/public` | Public | Properties filtered by optional `status`, `location`, `propertyType` and `sort`. Pass `status=Approved` to list only approved properties. |
+| `GET` | `/api/properties` | Logged in | Same filters, plus `id` and `ownerId` |
+| `POST` | `/api/properties` | Owner | Create a property |
+| `PATCH` | `/api/properties/:id` | Owner, Admin | Update a property. Owners cannot change the status, owner information or rejection feedback. |
+| `DELETE` | `/api/properties/:id` | Owner, Admin | Delete a property. Owners can delete only their own. |
+| `PATCH` | `/api/properties/approve/:id` | Admin | Approve a property |
+| `PATCH` | `/api/properties/reject/:id` | Admin | Reject a property and save `rejectionFeedback` |
+
+Query options: `location` (searches area, city and country, case-insensitive), `propertyType`, `status`, and `sort` (`price-asc` or `price-desc`).
+
+### Users
+
+| Method | Path | Access | Description |
+|---|---|---|---|
+| `GET` | `/api/users` | Admin | List all users |
+| `PATCH` | `/api/users/change-role` | Admin | Change a user's role. Body: `userId`, `role` |
+
+### Favorites
+
+| Method | Path | Access | Description |
+|---|---|---|---|
+| `POST` | `/api/favorite` | Tenant | Save a favorite |
+| `GET` | `/api/favorite?userId=` | Tenant | List the tenant's favorites |
+| `GET` | `/api/favorite/:propertyId?userId=` | Tenant | Check one property |
+| `DELETE` | `/api/favorite/:propertyId?userId=` | Tenant | Remove a favorite |
+
+The `userId` must match the logged-in user.
+
+### Bookings and transactions
+
+| Method | Path | Access | Description |
+|---|---|---|---|
+| `POST` | `/api/bookings` | Tenant | Create a booking and its transaction after payment. Repeating the same payment does not create duplicates. |
+| `GET` | `/api/bookings?status=` | Logged in | Tenants get their own bookings, owners get requests for their properties, admins get all. `status` filters by Pending, Approved or Rejected. |
+| `PATCH` | `/api/bookings` | Logged in | Set a booking to `Approved` or `Rejected`. Only the property's owner can change it. Body: `bookingId`, `bookingStatus` |
+| `GET` | `/api/transactions?status=` | Admin | Transaction history |
+
+### Reviews
+
+| Method | Path | Access | Description |
+|---|---|---|---|
+| `POST` | `/api/reviews` | Tenant | Add a review. Body: `propertyId`, `rating` (1 to 5), `comment` (10 to 500 characters). One review per tenant per property. |
+| `GET` | `/api/reviews?propertyId=` | Logged in | Reviews of one property, newest first |
+| `GET` | `/api/reviews/top` | Public | Four best reviews (rating 4 or more), highest rating first and newest first within a rating |
+
+## Database
+
+Database name: `RENTORA`
+
+| Collection | Purpose | Main fields |
+|---|---|---|
+| `user` | Accounts (managed by Better Auth) | `name`, `email`, `image`, `role` |
+| `session` | Login sessions (managed by Better Auth) | `token`, `userId` |
+| `properties` | Listings | `title`, `description`, `location`, `propertyType`, `rent`, `rentType`, `bedrooms`, `bathrooms`, `propertySize`, `amenities`, `images`, `extraFeatures`, `ownerInformation`, `status`, `rejectionFeedback` |
+| `favorites` | Saved properties | `userId`, `propertyId`, a copy of the property data, `createdAt` |
+| `bookings` | Reservations | `sessionId`, `propertyId`, `TenantUserId`, `OwnerUserId`, `bookingStatus`, `moveInDate`, `moveOutDate`, `contactNumber`, `notes`, `totalAmount`, `status`, `createdAt` |
+| `transactions` | Payment records | `transactionId` (unique), `bookingId`, `propertyId`, `propertyName`, `tenantId`, `tenantName`, `ownerId`, `ownerName`, `amount`, `currency`, `status`, `date` |
+| `reviews` | Tenant reviews | `propertyId`, `propertyTitle`, `tenantId`, `tenantName`, `tenantPhoto`, `rating`, `comment`, `createdAt` |
+
+Tenant and owner names are copied into transactions and reviews when they are created, so old records keep the names they had at the time.
+
+## Environment Variables
+
+Create a `.env` file in the project root. Never commit it.
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `MONGO_URI` | Yes | MongoDB connection string. It must point to the same database as the frontend's `MONGODB_URI`, because both apps share the `user` and `session` collections. |
+| `PORT` | No | Local port. Defaults to `5000`. |
+
+```env
+MONGO_URI=
 PORT=5000
 ```
 
-Replace the placeholders with your own MongoDB connection details. The backend connects to the `RENTORA` database. Do not commit `.env` or credentials to version control.
+## Getting Started
 
-### 3. Start the backend
+**Requirements:** Node.js 20.19 or newer, npm and a MongoDB database.
 
 ```bash
+git clone https://github.com/asirmahmud2/rentora-server.git
+cd rentora-server
+npm install
+
+# Create your .env file (see above), then:
 npm start
 ```
 
-The configured fallback port is `5000`, so the expected local base URL is `http://localhost:5000` when the application is bound to that port.
+The server runs at http://localhost:5000. On startup it connects to MongoDB and creates the unique index on `transactions.transactionId`. The server listens on a port only when it is not running on Vercel, because Vercel runs the exported app itself.
 
-> **Local startup note:** In the reviewed `index.js`, an explicit `app.listen()` call was not visible. If `npm start` does not open a local listener, verify the Express entry point and the way the application is invoked before troubleshooting frontend requests. The repository includes Vercel deployment configuration.
+To use it with the frontend locally, set `NEXT_PUBLIC_SERVER_URL=http://localhost:5000` in the frontend's `.env.local`.
 
-## API reference
-
-The following routes were visible in the reviewed `index.js` source.
-
-| Method | Endpoint | Access | Purpose |
-|---|---|---|---|
-| `GET` | `/` | Public | Basic response / deployment check. |
-| `POST` | `/api/properties` | Owner | Create a property listing. |
-| `GET` | `/api/properties` | Authenticated | Query properties with supported filters. |
-| `GET` | `/api/properties/public` | Public | Public property search and filtering. |
-| `GET` | `/api/properties/featured` | Public | Return up to six approved properties. |
-| `PATCH` | `/api/properties/:id` | Owner / Admin | Update a property; owner updates are restricted. |
-| `DELETE` | `/api/properties/:id` | Owner / Admin | Delete a property, with ownership checks for Owners. |
-| `PATCH` | `/api/properties/approve/:id` | Admin | Approve a listing. |
-| `PATCH` | `/api/properties/reject/:id` | Admin | Reject a listing and store feedback. |
-| `GET` | `/api/users` | Admin | Retrieve users. |
-| `PATCH` | `/api/users/change-role` | Admin | Change a user's role. |
-| `POST` | `/api/favorite` | Tenant | Save a favorite property. |
-| `GET` | `/api/favorite` | Tenant | List the authenticated tenant's favorites. |
-| `GET` | `/api/favorite/:propertyId` | Tenant | Check whether a property is favorited. |
-| `DELETE` | `/api/favorite/:propertyId` | Tenant | Remove a favorite. |
-| `POST` | `/api/bookings` | Tenant | Create or reuse a booking and corresponding transaction. |
-
-The property search route supports filters for fields such as `status`, `propertyType`, `id`, owner, and location, plus rent sorting. For public browsing, the frontend should request approved listings explicitly, for example:
+## Project Structure
 
 ```text
-GET /api/properties/public?status=Approved
+rentora-server/
+├── index.js        Express app, middleware, database access and all routes
+├── vercel.json     Vercel deployment configuration
+├── package.json    Dependencies and scripts
+└── .env            Local environment values (not committed)
 ```
-
-### Authentication and authorization
-
-Protected requests use an `Authorization: Bearer <session-token>` header. The API resolves the session token against Better Auth's MongoDB session records and uses the associated user's role to authorize protected operations. Supported roles are `Tenant`, `Owner`, and `Admin`.
-
-- **Tenant:** favorite operations and booking creation.
-- **Owner:** property creation and management of owned listings.
-- **Admin:** user management and property moderation.
-
-Keep authorization checks in the API even when the frontend also hides or disables actions based on role.
-
-## Data collections
-
-The backend uses the `RENTORA` MongoDB database. The reviewed code reads or writes these collections:
-
-| Collection | Purpose |
-|---|---|
-| `properties` | Listing details, location, rent, images, amenities, owner information, status, and rejection feedback. |
-| `user` | User identity and role records managed alongside Better Auth. |
-| `session` | Better Auth session records used to validate bearer tokens. |
-| `favorites` | Tenant favorites, including property references and a property-data snapshot. |
-| `bookings` | Paid booking records associated with a property, tenant, owner, and Stripe Checkout session. |
-| `transactions` | Payment transaction details associated with a booking, property, tenant, and owner. |
-
-A unique index on `transactions.transactionId` helps prevent duplicate transaction records for the same transaction ID.
-
-## Environment configuration
-
-| Variable | Required | Description |
-|---|---|---|
-| `MONGO_URI` | Yes | MongoDB connection string. |
-| `PORT` | No | Port for local hosting; the configured fallback is `5000`. |
-
-The frontend must use `NEXT_PUBLIC_SERVER_URL` pointing to this API's base URL. For the deployed frontend, that value is `https://rentora-server-nine.vercel.app`.
-
-## Known integration notes
-
-- In the reviewed source snapshot, `index.js` exposes booking creation but does not show booking-list (`GET /api/bookings`) or booking-status update (`PATCH /api/bookings`) routes, nor a transaction-history (`GET /api/transactions`) route.
-- The reviewed source snapshot also does not show `GET /api/reviews`, `POST /api/reviews`, or `GET /api/reviews/top`, although frontend views call these endpoints. Verify the deployed code or implement these routes before relying on booking history, booking management, transaction history, or reviews.
-- `/api/properties/public` is publicly accessible and can return records matching the supplied query. Ensure the API enforces `status=Approved` for public listing access rather than relying only on the frontend to send that filter.
-- Stripe Checkout creation is handled by the frontend's Next.js API route; this Express repository does not create the Checkout session itself.
 
 ## Deployment
 
-The repository includes `vercel.json` for deployment configuration. Set `MONGO_URI` in the backend hosting provider's environment settings and ensure the frontend's `NEXT_PUBLIC_SERVER_URL` matches the deployed API origin. Never expose database credentials or session tokens in client code or logs.
+The API is deployed on Vercel.
+
+1. Import the repository in Vercel
+2. Add `MONGO_URI` under Settings, Environment Variables, then redeploy
+3. In MongoDB Atlas, open Network Access and allow connections from Vercel. Vercel does not use fixed IP addresses, so use `0.0.0.0/0`.
+4. Set the frontend's `NEXT_PUBLIC_SERVER_URL` to the deployed API address
+
+## Known Limitations
+
+- **No availability check.** Creating a booking does not look for overlapping dates on the same property.
+- **Reviews are not tied to a stay.** Any tenant can review a property once, and there is no route to edit or delete a review.
+- **CORS is open.** All origins are allowed, which is convenient for development but can be restricted to the frontend URL.
+- **No notifications.** Booking status changes are saved, but no email or message is sent.
+- **No caching or rate limiting.** Each protected request does two database lookups (the session, then the user).
+
+## Author
+
+Built by **asirmahmud2** - [GitHub](https://github.com/asirmahmud2)
